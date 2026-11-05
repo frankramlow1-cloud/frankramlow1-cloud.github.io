@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Song-Ende kürzen</title>
+<style>
+:root{color-scheme:dark;--bg:#1e1d2d;--panel:#303044;--ink:#e6e9ff;--muted:#bfc5e7}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,Arial,sans-serif}
+html,body{height:100%;overflow:hidden}
+main{max-width:720px;margin:0 auto;padding:8px 26px;background:var(--panel);height:100dvh;display:flex;flex-direction:column}
+input[type=file]{width:100%;margin:0 0 8px;flex:none;color:var(--ink);font-size:.95rem}
+input[type=file]::file-selector-button{padding:10px 14px;margin-right:10px;border:0;border-radius:10px;background:#47475d;color:#fff;font:inherit;font-weight:650}
+canvas{display:block;width:100%;flex:1 1 0;min-height:110px;background:#171622;border-radius:10px;touch-action:none}
+button{display:block;width:100%;flex:none;min-height:58px;padding:10px;border:0;border-radius:14px;margin:6px 0;font:inherit;font-size:1.15rem;font-weight:700;color:#171622;background:#8ab4ff}
+button.gold{background:#ffe5ac}button.pink{background:#f18bad}button.dark{background:#47475d;color:#fff}
+button:disabled{opacity:.4}
+.row{display:flex;align-items:center;gap:12px;margin:6px 0 0;flex:none}
+.row span{color:var(--muted);font-weight:600;flex:1}
+.row input{width:110px;padding:8px;font:inherit;font-size:1.15rem;text-align:center;background:#171622;color:#fff;border:1px solid #55556a;border-radius:10px}
+#status{white-space:pre-wrap;color:#ffe5ac;font-size:.85rem;text-align:center;min-height:2.4em;margin:4px 0 0;flex:none}
+</style>
+</head>
+<body><main>
+<input id="file" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,.mp3,.m4a">
+<canvas id="wave"></canvas>
+<button id="play" class="gold" disabled>▶ Letzte 9 Sekunden anhören</button>
+<div class="row"><span>Fade-out (Sekunden)</span><input id="fade" type="text" inputmode="decimal" value="2"></div>
+<button id="apply" disabled>✂ Schnitt + Fade-out anwenden</button>
+<button id="undo" class="pink" disabled>↶ Rückgängig (Original)</button>
+<button id="save" class="dark" disabled>⬇ Speichern</button>
+<p id="status"></p>
+</main>
+<script>
+/* ---- M4A-Muxer (AAC-Rohframes -> MP4/M4A, Metadaten aus Original übernehmbar) ---- */
+function _u32(n){return [(n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255]}
+function _u16(n){return [(n>>>8)&255,n&255]}
+function _cat(a){let l=0;for(const x of a)l+=x.length;const o=new Uint8Array(l);let p=0;for(const x of a){o.set(x,p);p+=x.length}return o}
+function _bx(type,...parts){
+ const body=_cat(parts.map(p=>p instanceof Uint8Array?p:Uint8Array.from(p)));
+ const o=new Uint8Array(8+body.length);
+ o.set(_u32(8+body.length),0);
+ for(let i=0;i<4;i++)o[4+i]=type.charCodeAt(i);
+ o.set(body,8);return o;
+}
+function _fbx(type,flags,...parts){return _bx(type,[0,(flags>>16)&255,(flags>>8)&255,flags&255],...parts)}
+function _txt(s){return Array.from(s,c=>c.charCodeAt(0))}
+const _RATES=[96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+function makeAsc(rate,ch){
+ let idx=_RATES.indexOf(rate);if(idx<0)idx=4;
+ const v=(2<<11)|(idx<<7)|(ch<<3);return Uint8Array.from([v>>8,v&255]);
+}
+function _readBoxes(b,s,e){
+ const out=[];let p=s;
+ while(p+8<=e){
+  let size=((b[p]<<24)>>>0)+(b[p+1]<<16)+(b[p+2]<<8)+b[p+3];
+  const type=String.fromCharCode(b[p+4],b[p+5],b[p+6],b[p+7]);
+  let hdr=8;
+  if(size===1){size=0;for(let i=0;i<8;i++)size=size*256+b[p+8+i];hdr=16}
+  else if(size===0)size=e-p;
+  if(size<hdr||p+size>e)break;
+  out.push({type,start:p,body:p+hdr,end:p+size});p+=size;
+ }
+ return out;
+}
+function getUdta(b){
+ try{
+  const moov=_readBoxes(b,0,b.length).find(x=>x.type==='moov');if(!moov)return null;
+  const u=_readBoxes(b,moov.body,moov.end).find(x=>x.type==='udta');if(!u)return null;
+  return b.slice(u.start,u.end);
+ }catch(e){return null}
+}
+function getM4aRate(b){
+ try{
+  for(let i=0;i<Math.min(b.length-40,b.length);i++){
+   if(b[i]===0x6d&&b[i+1]===0x70&&b[i+2]===0x34&&b[i+3]===0x61){ /* 'mp4a' */
+    const o=i+4+24;const r=(((b[o]<<8)|b[o+1]));if(r>=8000&&r<=96000)return r;
+   }
+  }
+ }catch(e){}
+ return 0;
+}
+function muxM4a(o){
+ const {frames,rate,channels}=o,n=frames.length,asc=o.asc||makeAsc(rate,channels);
+ const bitrate=o.bitrate||256000;
+ const esds=_fbx('esds',0,
+  [0x03,3+2+(13+2+asc.length)+3,0,0,0],
+  [0x04,13+2+asc.length,0x40,0x15,0,0,0],_u32(bitrate),_u32(bitrate),
+  [0x05,asc.length],asc,
+  [0x06,1,2]);
+ const mp4a=_bx('mp4a',[0,0,0,0,0,0],_u16(1),[0,0,0,0,0,0,0,0],_u16(channels),_u16(16),_u16(0),_u16(0),_u32((rate<65536?rate:0)*65536),esds);
+ const matrix=[..._u32(0x10000),..._u32(0),..._u32(0),..._u32(0),..._u32(0x10000),..._u32(0),..._u32(0),..._u32(0),..._u32(0x40000000)];
+ const dur=n*1024,durMs=Math.round(dur/rate*1000);
+ const sizes=[];for(const f of frames)sizes.push(..._u32(f.length));
+ function moov(off){
+  const mvhd=_fbx('mvhd',0,_u32(0),_u32(0),_u32(1000),_u32(durMs),_u32(0x10000),_u16(0x100),_u16(0),_u32(0),_u32(0),matrix,new Array(24).fill(0),_u32(2));
+  const tkhd=_fbx('tkhd',3,_u32(0),_u32(0),_u32(1),_u32(0),_u32(durMs),_u32(0),_u32(0),_u16(0),_u16(0),_u16(0x100),_u16(0),matrix,_u32(0),_u32(0));
+  const mdhd=_fbx('mdhd',0,_u32(0),_u32(0),_u32(rate),_u32(dur),_u16(0x55c4),_u16(0));
+  const hdlr=_fbx('hdlr',0,_u32(0),_txt('soun'),new Array(12).fill(0),_txt('SoundHandler'),[0]);
+  const smhd=_fbx('smhd',0,_u16(0),_u16(0));
+  const dinf=_bx('dinf',_fbx('dref',0,_u32(1),_fbx('url ',1)));
+  const stsd=_fbx('stsd',0,_u32(1),mp4a);
+  const stts=_fbx('stts',0,_u32(1),_u32(n),_u32(1024));
+  const stsc=_fbx('stsc',0,_u32(1),_u32(1),_u32(n),_u32(1));
+  const stsz=_fbx('stsz',0,_u32(0),_u32(n),sizes);
+  const stco=_fbx('stco',0,_u32(1),_u32(off));
+  const stbl=_bx('stbl',stsd,stts,stsc,stsz,stco);
+  const minf=_bx('minf',smhd,dinf,stbl);
+  const mdia=_bx('mdia',mdhd,hdlr,minf);
+  const trak=_bx('trak',tkhd,mdia);
+  return o.udta?_bx('moov',mvhd,trak,o.udta):_bx('moov',mvhd,trak);
+ }
+ const ftyp=_bx('ftyp',_txt('M4A '),_u32(0),_txt('M4A '),_txt('mp42'),_txt('isom'));
+ const m0=moov(0);
+ const off=ftyp.length+m0.length+8;
+ const m1=moov(off);
+ let total=0;for(const f of frames)total+=f.length;
+ const mdatHdr=new Uint8Array(8);mdatHdr.set(_u32(8+total),0);mdatHdr.set(_txt('mdat'),4);
+ return new Blob([ftyp,m1,mdatHdr,...frames],{type:'audio/mp4'});
+}
+if(typeof module!=='undefined')module.exports={muxM4a,getUdta,getM4aRate,makeAsc};
+
+(()=>{
+const $=id=>document.getElementById(id);
+const fileIn=$('file'),canvas=$('wave'),ctx=canvas.getContext('2d'),fadeIn=$('fade');
+const btnPlay=$('play'),btnApply=$('apply'),btnUndo=$('undo'),btnSave=$('save'),statusEl=$('status');
+const WIN=9,PLAY='▶ Letzte 9 Sekunden anhören';
+let ac=null,original=null,current=null,srcBytes=null,srcName='audio',srcExt='mp3',source=null,playing=false,cutRel=0,peaks=null,peakMax=1,dragging=false;
+const say=t=>{statusEl.textContent=t};
+const winOf=b=>Math.min(WIN,b.duration);
+
+/* ---------- Samplerate der Quelldatei, damit der Browser nicht umrechnet ---------- */
+function mp3Rate(b){
+ let pos=0;
+ if(b[0]===0x49&&b[1]===0x44&&b[2]===0x33)pos=10+(((b[6]&127)<<21)|((b[7]&127)<<14)|((b[8]&127)<<7)|(b[9]&127));
+ const R={3:[44100,48000,32000],2:[22050,24000,16000],0:[11025,12000,8000]};
+ for(let i=pos;i<Math.min(b.length-4,pos+65536);i++){
+  if(b[i]===0xff&&(b[i+1]&0xe0)===0xe0){
+   const ver=(b[i+1]>>3)&3,layer=(b[i+1]>>1)&3,idx=(b[i+2]>>2)&3;
+   if(ver!==1&&layer!==0&&idx!==3)return R[ver][idx];
+  }
+ }
+ return 0;
+}
+function ctxFor(rate){
+ if(ac&&(!rate||ac.sampleRate===rate))return ac;
+ try{if(ac)ac.close()}catch(e){}
+ try{ac=rate?new(window.AudioContext||window.webkitAudioContext)({sampleRate:rate}):new(window.AudioContext||window.webkitAudioContext)()}
+ catch(e){ac=new(window.AudioContext||window.webkitAudioContext)()}
+ return ac;
+}
+
+/* ---------- Wellenform ---------- */
+function fitCanvas(){
+ const dpr=Math.min(2,window.devicePixelRatio||1),w=canvas.clientWidth,h=canvas.clientHeight;
+ if(!w||!h)return;
+ canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+ if(current)computePeaks(current);
+ draw();
+}
+window.addEventListener('resize',fitCanvas);
+function computePeaks(b){
+ const n=canvas.width,win=winOf(b),start=Math.max(0,b.duration-win),sr=b.sampleRate;
+ const chs=[];for(let c=0;c<Math.min(2,b.numberOfChannels);c++)chs.push(b.getChannelData(c));
+ peaks=new Float32Array(n);peakMax=0;
+ for(let x=0;x<n;x++){
+  const i0=Math.max(0,Math.floor((start+(x/n)*win)*sr)),i1=Math.min(chs[0].length,Math.max(i0+1,Math.floor((start+((x+1)/n)*win)*sr)));
+  const stride=Math.max(1,Math.floor((i1-i0)/150));let p=0;
+  for(const ch of chs)for(let i=i0;i<i1;i+=stride){const v=Math.abs(ch[i]);if(v>p)p=v}
+  peaks[x]=p;if(p>peakMax)peakMax=p;
+ }
+ if(peakMax<0.02)peakMax=0.02;
+}
+function fadeSec(){
+ const f=parseFloat(String(fadeIn.value).replace(',','.'));
+ return isFinite(f)&&f>0?Math.min(f,60):0;
+}
+function draw(){
+ const W=canvas.width,H=canvas.height,d=canvas.width/(canvas.clientWidth||W);
+ ctx.fillStyle='#171622';ctx.fillRect(0,0,W,H);
+ if(!current){ctx.fillStyle='#85859c';ctx.font=(22*d)+'px system-ui';ctx.textAlign='center';ctx.fillText('Song auswählen',W/2,H/2);ctx.textAlign='left';return}
+ const win=winOf(current);
+ ctx.strokeStyle='#8ab4ff';ctx.lineWidth=1;ctx.beginPath();
+ for(let x=0;x<W;x++){const h=(peaks[x]/peakMax)*(H*0.46);ctx.moveTo(x+.5,H/2-h);ctx.lineTo(x+.5,H/2+h)}
+ ctx.stroke();
+ const x=(cutRel/win)*W;
+ ctx.fillStyle='rgba(241,154,203,.2)';ctx.fillRect(x,0,W-x,H);
+ const fw=Math.min(x,(fadeSec()/win)*W);
+ if(fw>0){const g=ctx.createLinearGradient(x-fw,0,x,0);g.addColorStop(0,'rgba(255,229,172,0)');g.addColorStop(1,'rgba(255,229,172,.35)');ctx.fillStyle=g;ctx.fillRect(x-fw,0,fw,H)}
+ ctx.strokeStyle='#ff647c';ctx.lineWidth=4*d;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+ const cutOff=win-cutRel;
+ ctx.font='bold '+(20*d)+'px system-ui';ctx.fillStyle='#fff';
+ const label=cutOff<0.005?'kein Schnitt':'−'+cutOff.toFixed(2)+' s';
+ const tw=ctx.measureText(label).width;
+ ctx.fillText(label,x>W/2?Math.max(8,x-tw-12*d):Math.min(W-tw-8,x+12*d),30*d);
+}
+function setBuffer(b){current=b;cutRel=winOf(b)/2;computePeaks(b);draw()}
+
+/* ---------- Laden ---------- */
+fileIn.addEventListener('change',async()=>{
+ stop();original=null;current=null;peaks=null;
+ btnPlay.disabled=btnApply.disabled=btnUndo.disabled=btnSave.disabled=true;draw();
+ const f=fileIn.files[0];if(!f)return;
+ try{
+  if(!/\.(mp3|m4a|mp4)$/i.test(f.name))throw new Error('Bitte eine MP3- oder M4A-Datei wählen.');
+  srcExt=/\.mp3$/i.test(f.name)?'mp3':'m4a';srcName=f.name.replace(/\.[^.]+$/,'');
+  say('Lädt …');
+  srcBytes=new Uint8Array(await f.arrayBuffer());
+  const rate=srcExt==='mp3'?mp3Rate(srcBytes):getM4aRate(srcBytes);
+  const c=ctxFor(rate);
+  original=await c.decodeAudioData(srcBytes.buffer.slice(0));
+  setBuffer(original);
+  btnPlay.disabled=btnApply.disabled=false;
+  say('Bereit – irgendwo im Fenster wischen, die rote Linie wandert mit');
+ }catch(e){console.error(e);say(e&&e.message&&/Bitte/.test(e.message)?e.message:'Diese Datei konnte nicht gelesen werden.');draw()}
+});
+
+/* ---------- Rote Linie ziehen ---------- */
+let dragX=0,dragCut=0;
+function moveCut(e){
+ if(!current)return;
+ const r=canvas.getBoundingClientRect(),win=winOf(current);
+ cutRel=Math.max(0,Math.min(win,dragCut+((e.clientX-dragX)/r.width)*win));draw();
+}
+canvas.addEventListener('pointerdown',e=>{if(!current)return;dragging=true;dragX=e.clientX;dragCut=cutRel;try{canvas.setPointerCapture(e.pointerId)}catch(_){}});
+canvas.addEventListener('pointermove',e=>{if(dragging)moveCut(e)});
+const endDrag=()=>{dragging=false};
+canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);
+fadeIn.addEventListener('input',draw);
+
+/* ---------- Anhören ---------- */
+function stop(){
+ if(source){try{source.onended=null;source.stop()}catch(e){}try{source.disconnect()}catch(e){}source=null}
+ playing=false;btnPlay.textContent=PLAY;
+}
+btnPlay.addEventListener('click',()=>{
+ if(playing){stop();return}
+ if(!current)return;
+ const c=ac;if(c.state==='suspended')c.resume();
+ source=c.createBufferSource();source.buffer=current;source.connect(c.destination);
+ source.start(0,Math.max(0,current.duration-WIN));playing=true;btnPlay.textContent='■ Stopp';
+ source.onended=()=>{source=null;playing=false;btnPlay.textContent=PLAY};
+});
+
+/* ---------- Schnitt + Fade-out ---------- */
+function makeEdited(b,end,fs){
+ const rate=b.sampleRate,len=Math.max(1,Math.min(b.length,Math.round(end*rate)));
+ const out=new AudioBuffer({length:len,numberOfChannels:b.numberOfChannels,sampleRate:rate});
+ const n=Math.min(len,Math.round(fs*rate));
+ for(let c=0;c<b.numberOfChannels;c++){
+  const d=out.getChannelData(c);d.set(b.getChannelData(c).subarray(0,len));
+  for(let i=0;i<n;i++)d[len-n+i]*=Math.cos((i/Math.max(1,n-1))*Math.PI/2);
+ }
+ return out;
+}
+btnApply.addEventListener('click',()=>{
+ if(!current)return;stop();
+ const endAbs=Math.max(0,current.duration-winOf(current))+cutRel;
+ const fs=fadeSec();
+ setBuffer(makeEdited(current,endAbs,fs));
+ btnUndo.disabled=false;btnSave.disabled=false;
+ say('Angewendet: '+(current.duration).toFixed(2)+' s lang, Fade-out '+Math.min(fs,current.duration).toFixed(1)+' s. Jetzt anhören oder speichern.');
+});
+btnUndo.addEventListener('click',()=>{
+ stop();setBuffer(original);btnUndo.disabled=true;btnSave.disabled=true;say('Original wiederhergestellt');
+});
+
+/* ---------- Export ---------- */
+const tick=()=>new Promise(r=>setTimeout(r,0));
+const toI16=f=>{const o=new Int16Array(f.length);for(let i=0;i<f.length;i++){const v=Math.max(-1,Math.min(1,f[i]));o[i]=Math.round(v<0?v*32768:v*32767)}return o};
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('x'));document.head.appendChild(s)})}
+async function loadLame(){
+ if(window.lamejs)return;
+ try{await loadScript('https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js')}
+ catch(e){await loadScript('https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js')}
+ if(!window.lamejs)throw new Error('MP3-Encoder konnte nicht geladen werden (Internet nötig).');
+}
+function id3Tag(b){
+ if(b[0]===0x49&&b[1]===0x44&&b[2]===0x33){
+  const size=((b[6]&127)<<21)|((b[7]&127)<<14)|((b[8]&127)<<7)|(b[9]&127);
+  const total=10+size+((b[5]&0x10)?10:0);
+  if(total<=b.length)return b.slice(0,total);
+ }
+ return null;
+}
+async function encodeMp3(b){
+ await loadLame();
+ const ch=Math.min(2,b.numberOfChannels),enc=new lamejs.Mp3Encoder(ch,b.sampleRate,320);
+ const L=toI16(b.getChannelData(0)),R=ch>1?toI16(b.getChannelData(1)):null;
+ const parts=[],id3=id3Tag(srcBytes);if(id3)parts.push(id3);
+ const step=1152*20;
+ for(let i=0;i<L.length;i+=step){
+  const o=R?enc.encodeBuffer(L.subarray(i,i+step),R.subarray(i,i+step)):enc.encodeBuffer(L.subarray(i,i+step));
+  if(o.length)parts.push(new Uint8Array(o));
+  if((i/step)%10===0){say('Kodiert … '+Math.round(i/L.length*100)+' %');await tick()}
+ }
+ const e=enc.flush();if(e.length)parts.push(new Uint8Array(e));
+ const n=srcBytes.length;
+ if(n>=128&&srcBytes[n-128]===0x54&&srcBytes[n-127]===0x41&&srcBytes[n-126]===0x47)parts.push(srcBytes.slice(n-128));
+ return new Blob(parts,{type:'audio/mpeg'});
+}
+async function encodeM4a(b){
+ if(!('AudioEncoder' in window)||!('AudioData' in window))throw new Error('Dieser Browser kann kein M4A (AAC) erzeugen. Bitte Chrome verwenden.');
+ const ch=Math.min(2,b.numberOfChannels),rate=b.sampleRate;
+ const cfg={codec:'mp4a.40.2',sampleRate:rate,numberOfChannels:ch,bitrate:256000,aac:{format:'aac'}};
+ const sup=await AudioEncoder.isConfigSupported(cfg);
+ if(!sup.supported)throw new Error('AAC-Kodierung wird auf diesem Gerät nicht unterstützt.');
+ const frames=[];let asc=null,err=null;
+ const enc=new AudioEncoder({
+  output:(chunk,meta)=>{
+   const d=new Uint8Array(chunk.byteLength);chunk.copyTo(d);frames.push(d);
+   const desc=meta&&meta.decoderConfig&&meta.decoderConfig.description;
+   if(!asc&&desc)asc=ArrayBuffer.isView(desc)?new Uint8Array(desc.buffer.slice(desc.byteOffset,desc.byteOffset+desc.byteLength)):new Uint8Array(desc.slice(0));
+  },
+  error:e=>{err=e}
+ });
+ enc.configure(cfg);
+ const chd=[];for(let c=0;c<ch;c++)chd.push(b.getChannelData(c));
+ const step=1024*16;
+ for(let i=0;i<b.length;i+=step){
+  const n=Math.min(step,b.length-i),buf=new Float32Array(n*ch);
+  for(let c=0;c<ch;c++)buf.set(chd[c].subarray(i,i+n),c*n);
+  const ad=new AudioData({format:'f32-planar',sampleRate:rate,numberOfFrames:n,numberOfChannels:ch,timestamp:Math.round(i/rate*1e6),data:buf});
+  enc.encode(ad);ad.close();
+  while(enc.encodeQueueSize>6&&!err)await new Promise(r=>setTimeout(r,5));
+  if(err)throw err;
+  if((i/step)%8===0){say('Kodiert … '+Math.round(i/b.length*100)+' %');await tick()}
+ }
+ await enc.flush();if(err)throw err;try{enc.close()}catch(e){}
+ if(!frames.length)throw new Error('Kodierung lieferte keine Daten.');
+ return muxM4a({frames,rate,channels:ch,asc,udta:getUdta(srcBytes),bitrate:256000});
+}
+btnSave.addEventListener('click',async()=>{
+ if(!current)return;
+ btnSave.disabled=btnApply.disabled=btnUndo.disabled=btnPlay.disabled=true;stop();
+ try{
+  say('Kodiert … 0 %');await tick();
+  const blob=srcExt==='mp3'?await encodeMp3(current):await encodeM4a(current);
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=srcName+'.'+srcExt;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),120000);
+  say('Fertig: '+srcName+'.'+srcExt);
+ }catch(e){console.error(e);say('Export fehlgeschlagen: '+(e&&e.message?e.message:'unbekannter Fehler'))}
+ finally{btnSave.disabled=false;btnApply.disabled=false;btnUndo.disabled=(current===original);btnPlay.disabled=false}
+});
+fitCanvas();
+})();
+</script></body></html>

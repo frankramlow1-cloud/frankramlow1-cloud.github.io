@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Zusammenführer und Umwandler</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <style>
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+      padding: 20px; 
+      max-width: 900px; 
+      margin: 20px auto; 
+      background-color: #121212; 
+      color: #ffffff; 
+    }
+    .card { 
+      background: #1e1e1e; 
+      padding: 40px 30px; 
+      border-radius: 16px; 
+      box-shadow: 0 6px 20px rgba(0,0,0,0.6); 
+      text-align: center; 
+      border: 1px solid #333333;
+    }
+    h1 { 
+      margin-top: 0; 
+      color: #64b5f6; 
+      font-size: 38px; 
+      line-height: 1.2;
+    }
+    p { 
+      font-size: 22px; 
+      color: #e0e0e0; 
+      line-height: 1.6; 
+      margin-bottom: 35px;
+    }
+    .file-input-wrapper { 
+      margin: 30px 0; 
+    }
+    input[type="file"] { 
+      display: none; 
+    }
+    .custom-btn { 
+      display: block; 
+      background-color: #1976d2; 
+      color: #ffffff; 
+      padding: 28px 20px; 
+      border-radius: 12px; 
+      font-weight: bold; 
+      font-size: 28px; 
+      cursor: pointer; 
+      transition: background 0.2s, transform 0.1s; 
+      border: none; 
+      width: 100%; 
+      box-sizing: border-box; 
+      box-shadow: 0 4px 15px rgba(25, 118, 210, 0.5);
+    }
+    .custom-btn:hover { 
+      background-color: #1565c0; 
+    }
+    .custom-btn:active {
+      transform: scale(0.99);
+    }
+    #status { 
+      margin-top: 30px; 
+      font-weight: 600; 
+      font-size: 24px; 
+      color: #ffffff; 
+      min-height: 30px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h1>PDF Zusammenführer und Umwandler</h1>
+  <p>Wähle deine Dateien aus (PDF, JPEG, PNG). Sie werden automatisch sortiert, umgewandelt und als ein einziges PDF-Dokument gespeichert.</p>
+  
+  <div class="file-input-wrapper">
+    <label for="fileInput" class="custom-btn" id="selectBtn">📁 Seiten auswählen & Starten</label>
+    <input type="file" id="fileInput" multiple accept="image/jpeg, image/png, application/pdf" onchange="processFiles()">
+  </div>
+
+  <div id="status"></div>
+</div>
+
+<script>
+  async function processFiles() {
+    const input = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    const btn = document.getElementById('selectBtn');
+
+    if (input.files.length === 0) return;
+
+    btn.style.pointerEvents = 'none';
+    btn.style.backgroundColor = '#555555';
+    btn.style.boxShadow = 'none';
+    
+    const files = Array.from(input.files).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+    status.innerText = `Starte Verarbeitung von ${files.length} Dateien...`;
+
+    try {
+      const mergedPdf = await PDFLib.PDFDocument.create();
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        status.innerText = `Verarbeite Seite ${i + 1} von ${files.length}: ${file.name}`;
+        
+        const fileBuffer = await file.arrayBuffer();
+
+        if (file.type === "application/pdf") {
+          const pdf = await PDFLib.PDFDocument.load(fileBuffer);
+          const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+          copiedPages.forEach(page => mergedPdf.addPage(page));
+        } 
+        else if (file.type === "image/jpeg" || file.type === "image/png") {
+          let image;
+          if (file.type === "image/jpeg") {
+            image = await mergedPdf.embedJpg(fileBuffer);
+          } else {
+            image = await mergedPdf.embedPng(fileBuffer);
+          }
+
+          const page = mergedPdf.addPage([595.28, 841.89]);
+          const { width, height } = image.scaleToFit(595.28, 841.89);
+          
+          page.drawImage(image, {
+            x: (595.28 - width) / 2,
+            y: (841.89 - height) / 2,
+            width: width,
+            height: height
+          });
+        }
+      }
+
+      status.innerText = "Erstelle finales PDF-Dokument...";
+
+      const mergedPdfBytes = await mergedPdf.save();
+      const blob = new Blob([mergedPdfBytes], { type: "application/pdf" });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = "Zusammengefuegtes_Dokument.pdf";
+      link.click();
+
+      status.innerText = "✅ Fertig! Das Gesamt-PDF wurde heruntergeladen.";
+    } catch (err) {
+      console.error(err);
+      status.innerText = "❌ Fehler beim Zusammenfügen der Dateien.";
+    } finally {
+      btn.style.pointerEvents = 'auto';
+      btn.style.backgroundColor = '#1976d2';
+      btn.style.boxShadow = '0 4px 15px rgba(25, 118, 210, 0.5)';
+      input.value = '';
+    }
+  }
+</script>
+
+</body>
+</html>

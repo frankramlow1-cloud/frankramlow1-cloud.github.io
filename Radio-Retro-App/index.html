@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Radio Retro</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#120904">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: radial-gradient(ellipse at center, #2a160a 0%, #120904 60%, #070302 100%);
+    background-color: #120904;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  #stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 688px; height: 1196px;
+    transform: translate(-50%, -50%) scale(var(--s, 0.5));
+    background: url(bg.jpg) 0 0 / 688px 1196px no-repeat;
+    font-family: "Noto Serif", Georgia, "Times New Roman", serif;
+  }
+  .abs { position: absolute; }
+
+  /* Cover-Sichtfenster */
+  #coverWrap { left: 128px; top: 99px; width: 185px; height: 185px; border-radius: 7px; overflow: hidden; }
+  #coverDisplay { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .35s; }
+  #coverDisplay.show { opacity: 1; }
+  #coverWrap::after { content: ""; position: absolute; inset: 0; border-radius: 7px;
+    box-shadow: inset 0 3px 7px rgba(0,0,0,.75), inset 0 0 2px rgba(0,0,0,.9); pointer-events: none; }
+
+  /* Knöpfe aus dem Original-Design (gleicher Bildausschnitt, beim Drücken eingedrückt) */
+  .press {
+    position: absolute; border: 0; padding: 0; margin: 0; outline: none; cursor: pointer;
+    background-image: url(bg.jpg); background-size: 688px 1196px; background-repeat: no-repeat;
+    transition: transform .06s, filter .06s;
+  }
+  .press:active, .press.down { transform: translateY(1.5px) scale(.985); filter: brightness(.8) contrast(1.05); }
+  .press:disabled { cursor: default; }
+  .busy .side { filter: brightness(.75) saturate(.8); }
+
+  #btnSongs   { left: 374px; top: 75px;  width: 233px; height: 108px; border-radius: 18px; background-position: -374px -75px; }
+  #btnJingles { left: 374px; top: 200px; width: 233px; height: 108px; border-radius: 18px; background-position: -374px -200px; }
+  #playBtn    { left: 258px; top: 413px; width: 171px; height: 171px; border-radius: 50%; background-position: -258px -413px; }
+  #eqStd      { left: 369px; top: 696px; width: 148px; height: 42px; border-radius: 12px; background-position: -369px -696px; }
+  #eqMid      { left: 527px; top: 696px; width: 113px; height: 42px; border-radius: 12px; background-position: -527px -696px; }
+
+  /* Statuszeile */
+  #status {
+    left: 40px; top: 328px; width: 608px; height: 62px;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    color: #ead3a4; font-size: 34px; line-height: 1.15; letter-spacing: .2px;
+    text-shadow: 0 1.5px 1px rgba(0,0,0,.75), 0 -1px 0 rgba(255,232,190,.18);
+    overflow: hidden; word-break: break-word;
+  }
+  #status span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* Zeitanzeigen in Messing */
+  .time {
+    top: 448px; width: 214px; height: 104px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 88px; line-height: 1; letter-spacing: 1px; white-space: nowrap;
+    color: #dcc08a;
+    background: linear-gradient(180deg, #f1dcab 0%, #d6b77c 45%, #a98450 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 2px 1.5px rgba(0,0,0,.65)) drop-shadow(0 -0.5px 0 rgba(255,236,196,.25));
+    font-variant-numeric: lining-nums;
+  }
+  #tCur { left: 37px; }
+  #tDur { left: 437px; }
+
+  /* Fortschrittsregler */
+  #seek { left: 56px; top: 588px; width: 576px; height: 76px; touch-action: none; }
+  #knob {
+    position: absolute; top: 8px; width: 61px; height: 54px; left: 0;
+    background: url(knob.png) 0 0 / 61px 54px no-repeat;
+    filter: drop-shadow(1px 4px 3px rgba(0,0,0,.6));
+    pointer-events: none;
+  }
+
+  /* Equalizer */
+  .band { position: absolute; top: 742px; width: 56px; height: 296px; touch-action: none; }
+  .cap {
+    position: absolute; left: 8px; width: 40px; height: 68px;
+    background: url(cap.png) 0 0 / 40px 68px no-repeat;
+    filter: drop-shadow(2px 5px 3px rgba(0,0,0,.55));
+    pointer-events: none;
+  }
+
+  #offline { position: fixed; left: 0; right: 0; bottom: 6px; text-align: center;
+    font: 13px/1.3 sans-serif; color: #b08a5c; opacity: .8; pointer-events: none; z-index: 5; }
+</style>
+</head>
+<body>
+
+<div id="offline"></div>
+<div id="stage">
+  <div id="coverWrap" class="abs"><img id="coverDisplay" alt=""></div>
+
+  <button id="btnSongs" class="press side" aria-label="Songs einlesen"></button>
+  <button id="btnJingles" class="press side" aria-label="Jingles einlesen"></button>
+
+  <div id="status" class="abs"><span id="statusText">Bitte beide Ordner wählen.</span></div>
+
+  <div id="tCur" class="abs time">0:00</div>
+  <button id="playBtn" class="press" aria-label="Play / Pause"></button>
+  <div id="tDur" class="abs time">0:00</div>
+
+  <div id="seek" class="abs"><div id="knob"></div></div>
+
+  <button id="eqStd" class="press" aria-label="Equalizer Standard"></button>
+  <button id="eqMid" class="press" aria-label="Equalizer Mitte"></button>
+  <div id="eqGrid"></div>
+
+  <input type="file" id="musicFolderInput" webkitdirectory directory multiple style="display:none">
+  <input type="file" id="jingleFolderInput" webkitdirectory directory multiple style="display:none">
+</div>
+
+<script>
+/* =====================================================================
+   Bühne an den Bildschirm anpassen (Design bleibt immer 1:1 erhalten)
+   ===================================================================== */
+const stage = document.getElementById('stage');
+let SCALE = 1;
+function fitStage() {
+    const w = window.innerWidth, h = window.innerHeight;
+    SCALE = Math.min(w / 688, h / 1196);
+    stage.style.setProperty('--s', SCALE);
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+function stagePoint(e) {
+    const r = stage.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / SCALE, y: (e.clientY - r.top) / SCALE };
+}
+
+/* =====================================================================
+   Original-Logik (Abspielen, Überblenden, Equalizer, Vorverstärker)
+   ===================================================================== */
+let allMusicFiles = [];
+let allJingleFiles = [];
+let musicList = [];
+let jingleList = [];
+let playJingleNext = false;
+
+let historyStack = [];
+let currentTrack = null;
+
+const playerA = document.createElement('audio');
+const playerB = document.createElement('audio');
+playerA.controls = false;
+playerB.controls = false;
+playerA.preload = 'auto';
+playerB.preload = 'auto';
+
+let activePlayer = playerA;
+let overlapTriggered = false;
+
+const audioContainer = document.createElement('div');
+audioContainer.style.display = 'none';
+audioContainer.appendChild(playerA);
+audioContainer.appendChild(playerB);
+document.body.appendChild(audioContainer);
+
+const statusText = document.getElementById('statusText');
+const coverDisplay = document.getElementById('coverDisplay');
+
+let audioCtx, sourceA, sourceB, preampGain;
+
+const bands = [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const defaultVLCGains = [9, 5, 2, 0, 0, 0, 2, 6, 11, 18];
+const EQ_MIN = -12, EQ_MAX = 18;
+const filters = [];
+const eqValues = [];
+
+function setStatus(t) {
+    statusText.textContent = t;
+    fitStatus();
+}
+function fitStatus() {
+    const box = document.getElementById('status');
+    let size = 34;
+    statusText.style.fontSize = size + 'px';
+    while (size > 20 && (statusText.scrollHeight > box.clientHeight + 1 || statusText.scrollWidth > box.clientWidth + 1)) {
+        size -= 1;
+        statusText.style.fontSize = size + 'px';
+    }
+}
+
+/* ---------- Equalizer-Regler (Messing-Schieber) ---------- */
+const SLOT_X = [75, 135, 195, 254, 314, 374, 433, 492, 553, 612];
+const CAP_Y_TOP = 785, CAP_Y_BOTTOM = 995;           // Kappen-Mitte bei +18 dB bzw. -12 dB
+function valueToY(v) { return CAP_Y_TOP + (EQ_MAX - v) * (CAP_Y_BOTTOM - CAP_Y_TOP) / (EQ_MAX - EQ_MIN); }
+function yToValue(y) {
+    const v = EQ_MAX - (y - CAP_Y_TOP) * (EQ_MAX - EQ_MIN) / (CAP_Y_BOTTOM - CAP_Y_TOP);
+    return Math.max(EQ_MIN, Math.min(EQ_MAX, Math.round(v)));
+}
+const bandEls = [];
+function buildEqUI() {
+    const eqGrid = document.getElementById('eqGrid');
+    bands.forEach((freq, index) => {
+        let saved = localStorage.getItem('radioEq-' + index);
+        let val = saved !== null ? parseFloat(saved) : defaultVLCGains[index];
+        if (isNaN(val)) val = defaultVLCGains[index];
+        eqValues[index] = val;
+        const band = document.createElement('div');
+        band.className = 'band';
+        band.style.left = (SLOT_X[index] - 28) + 'px';
+        const cap = document.createElement('div');
+        cap.className = 'cap';
+        band.appendChild(cap);
+        eqGrid.appendChild(band);
+        bandEls[index] = cap;
+        placeCap(index);
+
+        let dragging = false, grabOffset = 0;
+        band.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            band.setPointerCapture(e.pointerId);
+            dragging = true;
+            const p = stagePoint(e);
+            const capY = valueToY(eqValues[index]);
+            // Kappe angefasst -> relativ ziehen, sonst direkt dorthin springen
+            grabOffset = Math.abs(p.y - capY) <= 34 ? p.y - capY : 0;
+            setBand(index, yToValue(p.y - grabOffset));
+        });
+        band.addEventListener('pointermove', e => {
+            if (!dragging) return;
+            const p = stagePoint(e);
+            setBand(index, yToValue(p.y - grabOffset));
+        });
+        const end = () => { dragging = false; };
+        band.addEventListener('pointerup', end);
+        band.addEventListener('pointercancel', end);
+    });
+}
+function placeCap(index) {
+    bandEls[index].style.top = (valueToY(eqValues[index]) - 34 - 742) + 'px';
+}
+function setBand(index, value) {
+    if (eqValues[index] === value) return;
+    eqValues[index] = value;
+    placeCap(index);
+    changeGain(index, value);
+}
+buildEqUI();
+
+function initAudio() {
+    if (audioCtx) return;
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioContextClass({ latencyHint: 'playback' });
+
+    sourceA = audioCtx.createMediaElementSource(playerA);
+    sourceB = audioCtx.createMediaElementSource(playerB);
+
+    preampGain = audioCtx.createGain();
+    preampGain.gain.value = 0.35;
+
+    sourceA.connect(preampGain);
+    sourceB.connect(preampGain);
+
+    let lastNode = preampGain;
+
+    bands.forEach((freq, index) => {
+        const filter = audioCtx.createBiquadFilter();
+
+        if (index === 0) {
+            filter.type = 'lowshelf';
+        } else if (index === bands.length - 1) {
+            filter.type = 'highshelf';
+        } else {
+            filter.type = 'peaking';
+            filter.Q.value = 1.0;
+        }
+
+        filter.frequency.value = freq;
+        filter.gain.value = eqValues[index];
+
+        filters.push(filter);
+        lastNode.connect(filter);
+        lastNode = filter;
+    });
+
+    lastNode.connect(audioCtx.destination);
+
+    setupMediaSession();
+}
+
+function formatTime(seconds) {
+    if (isNaN(seconds) || !isFinite(seconds)) return "0:00";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return mins + ':' + (secs < 10 ? '0' : '') + secs;
+}
+
+/* ---------- Zeitanzeige + Fortschrittsregler ---------- */
+const tCur = document.getElementById('tCur');
+const tDur = document.getElementById('tDur');
+const knob = document.getElementById('knob');
+const seekEl = document.getElementById('seek');
+const KNOB_MAX = 593 - 30.5 - 56;   // Knopf-Mitte läuft von x=95 bis x=593
+const KNOB_LEFT0 = 95 - 30.5 - 56;
+let seekDragging = false;
+let progressValue = 0;   // 0..100
+
+function setKnob(pct) {
+    progressValue = Math.max(0, Math.min(100, pct));
+    knob.style.left = (KNOB_LEFT0 + (KNOB_MAX - KNOB_LEFT0) * progressValue / 100) + 'px';
+}
+function fitTime(el, text) {
+    if (el.textContent === text) return;
+    el.textContent = text;
+    el.style.fontSize = (text.length <= 4 ? 88 : text.length === 5 ? 74 : 60) + 'px';
+}
+setKnob(0);
+
+function updatePlayerUI(player) {
+    if (player !== activePlayer) return;
+    const current = player.currentTime || 0;
+    const duration = player.duration || 0;
+
+    fitTime(tCur, formatTime(current));
+    fitTime(tDur, formatTime(duration));
+
+    if (!seekDragging) setKnob(duration > 0 ? (current / duration) * 100 : 0);
+    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration > 0 && isFinite(duration)) {
+        try { navigator.mediaSession.setPositionState({ duration, position: Math.min(current, duration), playbackRate: 1 }); } catch (e) {}
+    }
+}
+
+function pctFromEvent(e) {
+    const p = stagePoint(e);
+    return (p.x - 95) / (593 - 95) * 100;
+}
+seekEl.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    seekEl.setPointerCapture(e.pointerId);
+    seekDragging = true;
+    setKnob(pctFromEvent(e));
+    seekAudio(progressValue);
+});
+seekEl.addEventListener('pointermove', e => {
+    if (!seekDragging) return;
+    setKnob(pctFromEvent(e));
+    seekAudio(progressValue);
+});
+const seekEnd = () => { seekDragging = false; };
+seekEl.addEventListener('pointerup', seekEnd);
+seekEl.addEventListener('pointercancel', seekEnd);
+
+function togglePlayPause() {
+    if (!audioCtx) initAudio();
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+    if (!activePlayer.src) {
+        if (resumeTrack) {
+            const r = resumeTrack; resumeTrack = null;
+            playFile(r.entry, r.isJingle, false, false, r.t);
+        } else if (allMusicFiles.length || allJingleFiles.length) playNext(false);
+        return;
+    }
+    if (activePlayer.paused) {
+        userPaused = false;
+        activePlayer.play();
+    } else {
+        userPaused = true;
+        activePlayer.pause();
+        saveState();
+    }
+    updatePlayerUI(activePlayer);
+}
+
+function seekAudio(val) {
+    if (!activePlayer.duration) return;
+    activePlayer.currentTime = (val / 100) * activePlayer.duration;
+}
+
+function checkTimeProgress(player) {
+    if (player !== activePlayer) return;
+    updatePlayerUI(player);
+    if (!player.duration) return;
+    if (!upcoming && !preparing && player.currentTime > 2 && player.duration - player.currentTime > 3) prepareNext();
+    if (Date.now() - lastSave > 5000) saveState();
+    const remaining = player.duration - player.currentTime;
+    if (remaining <= 0.70 && !overlapTriggered) {
+        overlapTriggered = true;
+        playNext(true);
+    }
+}
+
+playerA.ontimeupdate = () => checkTimeProgress(playerA);
+playerB.ontimeupdate = () => checkTimeProgress(playerB);
+playerA.onplay = () => updatePlayerUI(playerA);
+playerA.onpause = () => { updatePlayerUI(playerA); if (activePlayer === playerA && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; };
+playerB.onplay = () => updatePlayerUI(playerB);
+playerB.onpause = () => { updatePlayerUI(playerB); if (activePlayer === playerB && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; };
+playerA.onloadedmetadata = () => updatePlayerUI(playerA);
+playerB.onloadedmetadata = () => updatePlayerUI(playerB);
+
+function setupMediaSession() {
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('play', () => {
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+            if (!activePlayer.src) { togglePlayPause(); return; }
+            userPaused = false;
+            activePlayer.play();
+            navigator.mediaSession.playbackState = 'playing';
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+            userPaused = true;
+            activePlayer.pause();
+            saveState();
+            navigator.mediaSession.playbackState = 'paused';
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => playNext(false));
+        navigator.mediaSession.setActionHandler('previoustrack', () => playPrevious());
+    }
+}
+
+function changeGain(index, value) {
+    localStorage.setItem('radioEq-' + index, value);
+    if (filters[index]) filters[index].gain.value = parseFloat(value);
+}
+
+function resetEqStandard() {
+    bands.forEach((freq, index) => setBand(index, defaultVLCGains[index]));
+}
+
+function resetEqNeutral() {
+    bands.forEach((freq, index) => setBand(index, 0));
+}
+
+function cleanFileName(filename) {
+    return filename.replace(/\.(mp3|m4a|wma|ogg|wav)$/i, '');
+}
+
+const allowedExts = ['.mp3', '.m4a', '.wma', '.ogg', '.wav'];
+
+/* ---------- echtes Zufallsmischen (Fisher-Yates) ---------- */
+function shuffled(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+/* =====================================================================
+   Dauerhafter Speicher in der App (eigene Kopien, Originale bleiben unberührt)
+   ===================================================================== */
+const Store = {
+    root: null,
+    async init() {
+        this.root = await navigator.storage.getDirectory();
+        try { if (navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+    },
+    async dir(kind, create = true) {
+        return this.root.getDirectoryHandle(kind, { create });
+    },
+    async loadIndex(kind) {
+        try {
+            const d = await this.dir(kind, false);
+            const fh = await d.getFileHandle('index.json');
+            const list = JSON.parse(await (await fh.getFile()).text());
+            return list.map(e => ({ kind, f: e.f, name: e.n }));
+        } catch (e) { return []; }
+    },
+    async wipe(kind) {
+        try { await this.root.removeEntry(kind, { recursive: true }); } catch (e) {}
+    },
+    async writeIndex(dir, list) {
+        const fh = await dir.getFileHandle('index.json', { create: true });
+        const w = await fh.createWritable();
+        await w.write(JSON.stringify(list));
+        await w.close();
+    },
+    async getFile(entry) {
+        const d = await this.dir(entry.kind, false);
+        const fh = await d.getFileHandle(entry.f);
+        return fh.getFile();
+    }
+};
+
+let importing = false;
+async function importFolder(kind, fileList) {
+    const label = kind === 'songs' ? 'Songs' : 'Jingles';
+    const files = Array.from(fileList).filter(f => allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+    if (files.length === 0) {
+        setStatus(`Im gewählten Ordner wurden keine ${label} gefunden. Bisherige ${label} bleiben erhalten.`);
+        return;
+    }
+    importing = true;
+    document.body.classList.add('busy');
+    let wakeLock = null;
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+
+    // laufende Wiedergabe anhalten, damit keine alte Kopie mehr benutzt wird
+    const wasPlaying = !!activePlayer.src && !activePlayer.paused;
+    stopAll();
+
+    // 1. alte Kopien dieser Sorte komplett löschen
+    setStatus(`Alte ${label}-Kopien werden entfernt …`);
+    await Store.wipe(kind);
+    if (kind === 'songs') allMusicFiles = []; else allJingleFiles = [];
+
+    // 2. Ordner neu einlesen (nur lesen, Originale werden nicht verändert)
+    const dir = await Store.dir(kind, true);
+    const index = [];
+    let failed = 0, errorMsg = '';
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+        const fname = 'f' + String(i + 1).padStart(5, '0') + ext;
+        if (i % 3 === 0 || i === files.length - 1) setStatus(`${label} werden eingelesen … ${i + 1} von ${files.length}`);
+        try {
+            const fh = await dir.getFileHandle(fname, { create: true });
+            const w = await fh.createWritable();
+            await file.stream().pipeTo(w);          // schließt die Datei automatisch
+            index.push({ f: fname, n: file.name });
+        } catch (e) {
+            failed++;
+            if (e && e.name === 'QuotaExceededError') { errorMsg = 'Speicher voll'; break; }
+        }
+    }
+    await Store.writeIndex(dir, index);
+    if (wakeLock) try { wakeLock.release(); } catch (e) {}
+
+    const entries = index.map(e => ({ kind, f: e.f, name: e.n }));
+    if (kind === 'songs') allMusicFiles = entries; else allJingleFiles = entries;
+
+    // 3. ALLES neu mischen
+    musicList = shuffled(allMusicFiles);
+    jingleList = shuffled(allJingleFiles);
+    playJingleNext = false;
+    historyStack = [];
+    currentTrack = null;
+    saveState();
+
+    importing = false;
+    document.body.classList.remove('busy');
+
+    if (errorMsg) {
+        setStatus(`⚠️ ${errorMsg}! Nur ${index.length} von ${files.length} ${label} übernommen.`);
+        return;
+    }
+    updateStatusAndCheckStart(true);
+    if (failed) setStatus(statusText.textContent + ` (${failed} Dateien nicht lesbar)`);
+}
+
+function stopAll() {
+    upcoming = null;
+    prepToken++;
+    resumeTrack = null;
+    userPaused = true;
+    [playerA, playerB].forEach(p => {
+        p.pause();
+        p.removeAttribute('src');
+        p.load();
+        revokeUrl(p);
+    });
+    activePlayer = playerA;
+    overlapTriggered = false;
+    coverDisplay.classList.remove('show');
+    updatePlayerUI(activePlayer);
+}
+
+const btnSongs = document.getElementById('btnSongs');
+const btnJingles = document.getElementById('btnJingles');
+btnSongs.addEventListener('click', () => { if (!importing) document.getElementById('musicFolderInput').click(); });
+btnJingles.addEventListener('click', () => { if (!importing) document.getElementById('jingleFolderInput').click(); });
+document.getElementById('playBtn').addEventListener('click', togglePlayPause);
+document.getElementById('eqStd').addEventListener('click', resetEqStandard);
+document.getElementById('eqMid').addEventListener('click', resetEqNeutral);
+
+document.getElementById('musicFolderInput').addEventListener('change', function (e) {
+    initAudio();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const files = e.target.files;
+    importFolder('songs', files).catch(err => { importing = false; document.body.classList.remove('busy'); setStatus('Fehler beim Einlesen: ' + err.message); });
+    this.value = '';
+});
+
+document.getElementById('jingleFolderInput').addEventListener('change', function (e) {
+    initAudio();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const files = e.target.files;
+    importFolder('jingles', files).catch(err => { importing = false; document.body.classList.remove('busy'); setStatus('Fehler beim Einlesen: ' + err.message); });
+    this.value = '';
+});
+
+function updateStatusAndCheckStart(autoStart) {
+    if (allMusicFiles.length > 0 && allJingleFiles.length === 0) {
+        setStatus(`🎵 ${allMusicFiles.length} Songs geladen. Bitte noch Jingles wählen!`);
+    } else if (allMusicFiles.length === 0 && allJingleFiles.length > 0) {
+        setStatus(`📻 ${allJingleFiles.length} Jingles geladen. Bitte noch Musik wählen!`);
+    } else if (allMusicFiles.length > 0 && allJingleFiles.length > 0) {
+        setStatus(`Bereit! (${allMusicFiles.length} Songs / ${allJingleFiles.length} Jingles)`);
+        if (autoStart && activePlayer.paused && !activePlayer.src) {
+            playNext(false);
+        }
+    } else {
+        setStatus('Bitte beide Ordner wählen.');
+    }
+}
+
+const playerUrls = new Map();
+function revokeUrl(p) {
+    const u = playerUrls.get(p);
+    if (u) { URL.revokeObjectURL(u); playerUrls.delete(p); }
+}
+
+let playToken = 0;
+let upcoming = null;        // schon vorgeladener nächster Titel {entry, isJingle, player}
+let preparing = false;
+let prepToken = 0;
+let resumeTrack = null;     // Titel, der beim letzten Schließen lief {entry, isJingle, t}
+let userPaused = true;      // true = Du hast selbst angehalten
+let trackStartedAt = 0;
+const lastPlayed = { songs: null, jingles: null };   // zuletzt gespielter Titel je Sorte
+
+async function playFile(entry, isJingle, pushToHistory = true, isOverlap = false, startTime = 0, preparedPlayer = null) {
+    if (!entry) return;
+    const token = ++playToken;
+
+    if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
+    if (pushToHistory && currentTrack) {
+        historyStack.push(currentTrack);
+        if (historyStack.length > 200) historyStack.shift();
+    }
+
+    let player;
+    if (preparedPlayer) {
+        // nächster Titel liegt schon fertig geladen im zweiten Player -> sofort starten
+        const other = preparedPlayer === playerA ? playerB : playerA;
+        activePlayer = preparedPlayer;
+        if (!isOverlap) { other.pause(); }
+        player = preparedPlayer;
+    } else {
+        if (isOverlap) {
+            activePlayer = (activePlayer === playerA) ? playerB : playerA;
+        } else {
+            playerA.pause();
+            playerA.currentTime = 0;
+            playerB.pause();
+            playerB.currentTime = 0;
+        }
+        player = activePlayer;
+        // falls dort ein vorgeladener Titel lag, ist der jetzt ungültig
+        if (upcoming && upcoming.player === player) { requeueUpcoming(); }
+    }
+
+    currentTrack = { file: entry, isJingle };
+    lastPlayed[entry.kind] = entry.f;
+    const cleanName = cleanFileName(entry.name);
+    setStatus(isJingle ? `📻 Jingle: ${cleanName}` : `🎵 Song: ${cleanName}`);
+
+    let file;
+    if (!preparedPlayer) {
+        try {
+            file = await Store.getFile(entry);
+        } catch (e) {
+            setStatus('Datei fehlt – bitte Ordner neu einlesen.');
+            return;
+        }
+        if (token !== playToken) return;
+        revokeUrl(player);
+        const url = URL.createObjectURL(file);
+        playerUrls.set(player, url);
+        player.src = url;
+    } else {
+        file = preparedPlayer._file;
+    }
+    if (startTime > 0) {
+        const seek = () => { try { player.currentTime = startTime; } catch (e) {} };
+        if (player.readyState >= 1) seek(); else player.addEventListener('loadedmetadata', seek, { once: true });
+    } else if (preparedPlayer) {
+        try { player.currentTime = 0; } catch (e) {}
+    }
+
+    if (file) extractCoverAndMetadata(file, isJingle, cleanName, token);
+
+    overlapTriggered = false;
+    userPaused = false;
+    trackStartedAt = Date.now();
+    player.play().then(() => {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+        }
+        updatePlayerUI(player);
+    }).catch(err => console.log("Play error:", err));
+    saveState();
+}
+
+function getNextFile(isJingleTarget) {
+    const refill = (all) => {
+        // Liste ist durch -> neu gemischt von vorne (endlos), ohne den gerade gespielten Titel direkt zu wiederholen
+        const list = shuffled(all);
+        const last = lastPlayed[all === allJingleFiles ? 'jingles' : 'songs'];
+        if (list.length > 1 && last && list[0].f === last) {
+            const k = 1 + Math.floor(Math.random() * (list.length - 1));
+            [list[0], list[k]] = [list[k], list[0]];
+        }
+        return list;
+    };
+    if (isJingleTarget) {
+        if (jingleList.length === 0 && allJingleFiles.length > 0) jingleList = refill(allJingleFiles);
+        return jingleList.length > 0 ? jingleList.shift() : null;
+    } else {
+        if (musicList.length === 0 && allMusicFiles.length > 0) musicList = refill(allMusicFiles);
+        return musicList.length > 0 ? musicList.shift() : null;
+    }
+}
+
+function pickNext() {
+    let fileToPlay = null;
+    let isJingle = false;
+    if (playJingleNext) {
+        fileToPlay = getNextFile(true);
+        isJingle = true;
+        if (!fileToPlay) { fileToPlay = getNextFile(false); isJingle = false; }
+    } else {
+        fileToPlay = getNextFile(false);
+        isJingle = false;
+        if (!fileToPlay) { fileToPlay = getNextFile(true); isJingle = true; }
+    }
+    if (!fileToPlay) return null;
+    playJingleNext = !playJingleNext;
+    return { entry: fileToPlay, isJingle };
+}
+
+// vorgeladenen Titel wieder vorne in seine Liste legen (z. B. bei Zurück/Stopp)
+function requeueUpcoming() {
+    if (!upcoming) return;
+    const u = upcoming;
+    upcoming = null;
+    prepToken++;
+    (u.isJingle ? jingleList : musicList).unshift(u.entry);
+    playJingleNext = u.isJingle;
+}
+
+// Den nächsten Titel schon während des laufenden Titels laden.
+// So muss beim Wechsel im Hintergrund nichts mehr gelesen werden – der Übergang klappt zuverlässiger.
+async function prepareNext() {
+    if (upcoming || preparing || importing) return;
+    const idle = activePlayer === playerA ? playerB : playerA;
+    if (!idle.paused) return;           // Ende des vorigen Titels läuft noch (Überblendung)
+    const n = pickNext();
+    if (!n) return;
+    preparing = true;
+    const myToken = ++prepToken;
+    try {
+        const file = await Store.getFile(n.entry);
+        if (myToken !== prepToken || !idle.paused || idle === activePlayer) {
+            (n.isJingle ? jingleList : musicList).unshift(n.entry); playJingleNext = n.isJingle;
+            return;
+        }
+        revokeUrl(idle);
+        const url = URL.createObjectURL(file);
+        playerUrls.set(idle, url);
+        idle._file = file;
+        idle.src = url;
+        idle.load();
+        upcoming = { entry: n.entry, isJingle: n.isJingle, player: idle };
+        saveState();
+    } catch (e) {
+        // Datei fehlt -> einfach überspringen
+    } finally {
+        preparing = false;
+    }
+}
+
+function playNext(isOverlap = false) {
+    if (importing) return;
+    let n = upcoming;
+    upcoming = null;
+    prepToken++;
+    if (n && n.player === activePlayer) n = { entry: n.entry, isJingle: n.isJingle };
+    if (!n) n = pickNext();
+    if (!n) return;
+    playFile(n.entry, n.isJingle, true, isOverlap, 0, n.player || null);
+}
+
+function playPrevious() {
+    if (activePlayer.currentTime > 3) {
+        activePlayer.currentTime = 0;
+        return;
+    }
+
+    if (historyStack.length > 0) {
+        requeueUpcoming();
+        const prevTrack = historyStack.pop();
+        // der aktuelle Titel kommt danach wieder dran
+        if (currentTrack) { (currentTrack.isJingle ? jingleList : musicList).unshift(currentTrack.file); }
+        playJingleNext = !prevTrack.isJingle;
+        playFile(prevTrack.file, prevTrack.isJingle, false, false);
+    } else {
+        activePlayer.currentTime = 0;
+    }
+}
+
+function handleEnded(player) {
+    if (player === activePlayer && !overlapTriggered) {
+        playNext(false);
+    }
+}
+
+playerA.onended = () => handleEnded(playerA);
+playerB.onended = () => handleEnded(playerB);
+
+/* ---------- Wächter: falls ein Übergang im Hintergrund hängen bleibt ---------- */
+setInterval(() => {
+    if (importing || userPaused || !activePlayer.src) return;
+    const p = activePlayer;
+    if (p.ended && !overlapTriggered) { playNext(false); return; }
+    // Titel sollte laufen, steht aber noch am Anfang (Start wurde verhindert) -> nochmal versuchen
+    if (p.paused && p.currentTime < 0.5 && Date.now() - trackStartedAt > 4000) {
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        p.play().catch(() => {});
+    }
+}, 3000);
+
+/* ---------- Fortschritt merken: Playlist läuft nach dem Schließen dort weiter ---------- */
+let lastSave = 0;
+function saveState() {
+    try {
+        const st = {
+            m: musicList.map(e => e.f),
+            j: jingleList.map(e => e.f),
+            pj: playJingleNext,
+            up: upcoming ? { f: upcoming.entry.f, j: upcoming.isJingle } : null,
+            cur: currentTrack ? { f: currentTrack.file.f, j: currentTrack.isJingle, t: (activePlayer.currentTime || 0) } : null
+        };
+        localStorage.setItem('radioState', JSON.stringify(st));
+        lastSave = Date.now();
+    } catch (e) {}
+}
+function restoreState() {
+    let st = null;
+    try { st = JSON.parse(localStorage.getItem('radioState') || 'null'); } catch (e) {}
+    const mMap = new Map(allMusicFiles.map(e => [e.f, e]));
+    const jMap = new Map(allJingleFiles.map(e => [e.f, e]));
+    if (!st || !Array.isArray(st.m) || !Array.isArray(st.j)) {
+        musicList = shuffled(allMusicFiles);
+        jingleList = shuffled(allJingleFiles);
+        return;
+    }
+    musicList = st.m.map(f => mMap.get(f)).filter(Boolean);
+    jingleList = st.j.map(f => jMap.get(f)).filter(Boolean);
+    playJingleNext = !!st.pj;
+    if (st.up) {
+        const e = (st.up.j ? jMap : mMap).get(st.up.f);
+        if (e) { (st.up.j ? jingleList : musicList).unshift(e); playJingleNext = st.up.j; }
+    }
+    if (st.cur) {
+        const e = (st.cur.j ? jMap : mMap).get(st.cur.f);
+        if (e) resumeTrack = { entry: e, isJingle: st.cur.j, t: Math.max(0, (st.cur.t || 0) - 2) };
+    }
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(); });
+window.addEventListener('pagehide', saveState);
+
+/* =====================================================================
+   Cover + Titel aus der Datei lesen (ID3v2 für MP3, iTunes-Tags für M4A)
+   – läuft komplett offline
+   ===================================================================== */
+async function readTags(file) {
+    const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+    if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) return readID3(file, head);
+    const h8 = new TextDecoder('latin1').decode(head.slice(4, 8));
+    if (h8 === 'ftyp') return readMP4(file);
+    return {};
+}
+function syncsafe(b, o) { return (b[o] << 21) | (b[o + 1] << 14) | (b[o + 2] << 7) | b[o + 3]; }
+function decodeText(bytes, enc) {
+    try {
+        if (enc === 1) return new TextDecoder('utf-16').decode(bytes).replace(/\0/g, '');
+        if (enc === 2) return new TextDecoder('utf-16be').decode(bytes).replace(/\0/g, '');
+        if (enc === 3) return new TextDecoder('utf-8').decode(bytes).replace(/\0/g, '');
+        return new TextDecoder('latin1').decode(bytes).replace(/\0/g, '');
+    } catch (e) { return ''; }
+}
+async function readID3(file, head) {
+    const ver = head[3], flags = head[5];
+    const size = syncsafe(head, 6);
+    let b = new Uint8Array(await file.slice(10, 10 + size).arrayBuffer());
+    if (flags & 0x80 && ver < 4) {            // Unsynchronisation (ganzer Tag)
+        const out = [];
+        for (let i = 0; i < b.length; i++) { out.push(b[i]); if (b[i] === 0xFF && b[i + 1] === 0x00) i++; }
+        b = new Uint8Array(out);
+    }
+    let p = 0;
+    if (flags & 0x40 && ver >= 3) {           // erweiterter Header überspringen
+        p += ver === 4 ? syncsafe(b, 0) : ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) + 4;
+    }
+    const tags = {};
+    const idLen = ver === 2 ? 3 : 4, hdLen = ver === 2 ? 6 : 10;
+    while (p + hdLen < b.length) {
+        const id = String.fromCharCode(...b.slice(p, p + idLen));
+        if (!/^[A-Z0-9]+$/.test(id)) break;
+        let fsize;
+        if (ver === 2) fsize = (b[p + 3] << 16) | (b[p + 4] << 8) | b[p + 5];
+        else if (ver === 4) fsize = syncsafe(b, p + 4);
+        else fsize = ((b[p + 4] << 24) | (b[p + 5] << 16) | (b[p + 6] << 8) | b[p + 7]) >>> 0;
+        const fflags = ver >= 3 ? b[p + 9] : 0;
+        let data = b.slice(p + hdLen, p + hdLen + fsize);
+        if (ver === 4 && (fflags & 0x02)) {   // Unsynchronisation (Frame)
+            const out = [];
+            for (let i = 0; i < data.length; i++) { out.push(data[i]); if (data[i] === 0xFF && data[i + 1] === 0x00) i++; }
+            data = new Uint8Array(out);
+        }
+        if (ver === 4 && (fflags & 0x01)) data = data.slice(4);   // Datenlängen-Angabe
+        if ((id === 'TIT2' || id === 'TT2') && !tags.title) tags.title = decodeText(data.slice(1), data[0]).trim();
+        if ((id === 'TPE1' || id === 'TP1') && !tags.artist) tags.artist = decodeText(data.slice(1), data[0]).trim();
+        if ((id === 'APIC' || id === 'PIC') && !tags.picture) {
+            const enc = data[0];
+            let i = 1, mime;
+            if (id === 'PIC') { const fmt = String.fromCharCode(...data.slice(1, 4)).toLowerCase(); mime = fmt === 'png' ? 'image/png' : 'image/jpeg'; i = 4; }
+            else { const s = i; while (data[i] !== 0 && i < data.length) i++; mime = String.fromCharCode(...data.slice(s, i)) || 'image/jpeg'; i++; }
+            i++; // Bildtyp
+            if (enc === 1 || enc === 2) { while (i + 1 < data.length && !(data[i] === 0 && data[i + 1] === 0)) i += 2; i += 2; }
+            else { while (i < data.length && data[i] !== 0) i++; i++; }
+            if (!mime.includes('/')) mime = 'image/' + mime.toLowerCase().replace('jpg', 'jpeg');
+            tags.picture = new Blob([data.slice(i)], { type: mime });
+        }
+        p += hdLen + fsize;
+    }
+    return tags;
+}
+async function readMP4(file) {
+    const tags = {};
+    async function atoms(start, end, cb) {
+        let pos = start;
+        while (pos + 8 <= end) {
+            const h = new DataView(await file.slice(pos, pos + 16).arrayBuffer());
+            let size = h.getUint32(0);
+            const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7));
+            let hl = 8;
+            if (size === 1) { size = Number(h.getBigUint64(8)); hl = 16; }
+            else if (size === 0) size = end - pos;
+            if (size < 8) break;
+            await cb(type, pos + hl, pos + size);
+            pos += size;
+        }
+    }
+    await atoms(0, file.size, async (t, s, e) => {
+        if (t !== 'moov') return;
+        await atoms(s, e, async (t, s, e) => {
+            if (t !== 'udta') return;
+            await atoms(s, e, async (t, s, e) => {
+                if (t !== 'meta') return;
+                await atoms(s + 4, e, async (t, s, e) => {
+                    if (t !== 'ilst') return;
+                    await atoms(s, e, async (t, s, e) => {
+                        const want = { 'covr': 1, '©nam': 1, '©ART': 1 };
+                        if (!want[t]) return;
+                        await atoms(s, e, async (dt, ds, de) => {
+                            if (dt !== 'data') return;
+                            const buf = await file.slice(ds, de).arrayBuffer();
+                            const kindNo = new DataView(buf).getUint32(0) & 0xFFFFFF;
+                            const payload = new Uint8Array(buf, 8);
+                            if (t === 'covr' && !tags.picture) tags.picture = new Blob([payload], { type: kindNo === 14 ? 'image/png' : 'image/jpeg' });
+                            if (t === '©nam') tags.title = new TextDecoder().decode(payload);
+                            if (t === '©ART') tags.artist = new TextDecoder().decode(payload);
+                        });
+                    });
+                });
+            });
+        });
+    });
+    return tags;
+}
+
+let coverUrl = null;
+function blobToDataURL(blob) {
+    return new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(blob); });
+}
+async function extractCoverAndMetadata(file, isJingle, titleText, token) {
+    let tags = {};
+    try { tags = await readTags(file); } catch (e) { tags = {}; }
+    if (token !== playToken) return;
+
+    let artwork = [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }];
+    if (tags.picture && tags.picture.size > 0) {
+        if (coverUrl) URL.revokeObjectURL(coverUrl);
+        coverUrl = URL.createObjectURL(tags.picture);
+        coverDisplay.onload = () => coverDisplay.classList.add('show');
+        coverDisplay.onerror = () => coverDisplay.classList.remove('show');
+        coverDisplay.src = coverUrl;
+        const dataUrl = await blobToDataURL(tags.picture);
+        if (dataUrl) artwork = [{ src: dataUrl, sizes: '512x512', type: tags.picture.type }];
+    } else {
+        coverDisplay.classList.remove('show');
+    }
+
+    if ('mediaSession' in navigator && token === playToken) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: tags.title || titleText,
+            artist: tags.artist || (isJingle ? "Radio Jingle" : "Mein Radio"),
+            artwork
+        });
+    }
+}
+
+/* =====================================================================
+   Start: gespeicherte Songs + Jingles laden – kein Neu-Einlesen nötig
+   ===================================================================== */
+(async function start() {
+    fitStatus();
+    if (!navigator.storage || !navigator.storage.getDirectory) {
+        setStatus('Dieser Browser unterstützt den App-Speicher nicht. Bitte Chrome verwenden.');
+        return;
+    }
+    try {
+        await Store.init();
+        allMusicFiles = await Store.loadIndex('songs');
+        allJingleFiles = await Store.loadIndex('jingles');
+        restoreState();
+        if (allMusicFiles.length && allJingleFiles.length) {
+            setStatus(resumeTrack
+                ? `▶ drücken – weiter mit: ${cleanFileName(resumeTrack.entry.name)}`
+                : `Bereit! (${allMusicFiles.length} Songs / ${allJingleFiles.length} Jingles) – ▶ drücken`);
+        } else {
+            updateStatusAndCheckStart(false);
+        }
+    } catch (e) {
+        setStatus('Speicher konnte nicht geöffnet werden: ' + e.message);
+    }
+})();
+
+const APP_VERSION = 2;
+/* Offline-Modus: App-Dateien im Handy speichern, damit sie ohne Datei-Manager startet */
+async function checkOffline() {
+    const el = document.getElementById('offline');
+    if (!('serviceWorker' in navigator) || !window.caches) { el.textContent = 'Offline-Modus: nicht möglich'; return; }
+    try {
+        await navigator.serviceWorker.register('sw.js');
+        await navigator.serviceWorker.ready;
+        const keys = await (await caches.open('radio-retro-v3')).keys();
+        if (keys.length >= 7) {
+            el.textContent = 'Offline-Modus: bereit ✓  ·  Version 2';
+        } else {
+            el.textContent = `Offline-Modus: wird vorbereitet … (${keys.length}/7)`;
+            setTimeout(checkOffline, 1500);
+        }
+    } catch (e) {
+        el.textContent = 'Offline-Modus: Fehler – ' + e.message;
+    }
+}
+window.addEventListener('load', checkOffline);
+</script>
+</body>
+</html>

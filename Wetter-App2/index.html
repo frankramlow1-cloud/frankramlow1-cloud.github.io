@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Wetter</title>
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#1a0d06">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="icon-192.png">
+    <script src="icons.js"></script>
+    <style>
+        :root {
+            --ink: #f3e6c8;
+            --label: #d8bf88;
+            --temp: #ff6553;
+            --border-radius: 9px;
+            --brass: linear-gradient(150deg, #e9cf86 0%, #b38c3e 22%, #6e4f17 45%, #d2b065 62%, #8a6526 80%, #e0c47c 100%);
+            --wood: linear-gradient(180deg, rgba(74, 32, 14, .92), rgba(46, 19, 8, .94));
+        }
+
+        html { background: #1a0d06; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background:
+                radial-gradient(ellipse at 50% 30%, rgba(0,0,0,0) 30%, rgba(0,0,0,.55) 100%),
+                linear-gradient(rgba(20, 8, 2, .45), rgba(20, 8, 2, .45)),
+                #24120a url(holz.jpg) center / cover no-repeat fixed;
+            color: var(--ink);
+            margin: 0;
+            padding: 4px;
+            height: 100dvh;
+            width: 100vw;
+            max-width: 100%;
+            box-sizing: border-box;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .app-container { width: 100%; max-width: 600px; display: flex; flex-direction: column; height: 100%; }
+
+        /* Messingrahmen mit kleinen Nieten in den Ecken */
+        .brass-frame {
+            border: 2.5px solid transparent;
+            background:
+                radial-gradient(circle at 7px 7px, #fff1c2 0, #c9a24f 1.6px, #5e410f 3px, transparent 3.6px) padding-box,
+                radial-gradient(circle at calc(100% - 7px) 7px, #fff1c2 0, #c9a24f 1.6px, #5e410f 3px, transparent 3.6px) padding-box,
+                radial-gradient(circle at 7px calc(100% - 7px), #fff1c2 0, #c9a24f 1.6px, #5e410f 3px, transparent 3.6px) padding-box,
+                radial-gradient(circle at calc(100% - 7px) calc(100% - 7px), #fff1c2 0, #c9a24f 1.6px, #5e410f 3px, transparent 3.6px) padding-box,
+                var(--wood) padding-box,
+                var(--brass) border-box;
+            box-shadow: 0 3px 7px rgba(0,0,0,.65), inset 0 0 0 1px rgba(0,0,0,.55), inset 0 2px 6px rgba(0,0,0,.45);
+        }
+
+        .header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; margin-bottom: 6px; flex-shrink: 0; }
+
+        .location-title {
+            padding: 6px 10px;
+            border-radius: var(--border-radius);
+            font-family: "Noto Serif", Georgia, "Times New Roman", serif;
+            font-size: 1.12rem;
+            font-weight: bold;
+            color: #f6ead0;
+            text-shadow: 0 1px 2px rgba(0,0,0,.9);
+            letter-spacing: .2px;
+            display: flex; justify-content: space-between; align-items: center; gap: 4px;
+            min-height: 32px; white-space: nowrap;
+            --wood: linear-gradient(180deg, rgba(40, 22, 10, .95), rgba(22, 11, 4, .97));
+        }
+        .stand {
+            font-family: "Noto Serif", Georgia, serif;
+            font-size: .64rem; font-weight: normal; color: var(--label);
+            text-align: right; line-height: 1.15;
+        }
+
+        .refresh-btn {
+            border: 1.5px solid transparent;
+            background: linear-gradient(180deg, #5a2a12, #33160a) padding-box, var(--brass) border-box;
+            color: #f3e2b8;
+            border-radius: 7px;
+            padding: 4px 9px;
+            font-size: .84rem; font-weight: bold;
+            font-family: -apple-system, Roboto, sans-serif;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.12);
+        }
+        .refresh-btn:active { transform: translateY(1px); filter: brightness(.9); }
+
+        .scroll-area { flex-grow: 1; overflow-y: auto; scroll-snap-type: y mandatory; display: flex; flex-direction: column; gap: 10px; padding-bottom: 10px; }
+
+        .day-slide { scroll-snap-align: start; flex: 0 0 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; height: 100%; }
+
+        .column { display: grid; grid-template-rows: repeat(6, 1fr); gap: 5px; height: 100%; min-width: 0; min-height: 0; }
+
+        .weather-card {
+            border-radius: var(--border-radius);
+            padding: 3px 7px 3px;
+            display: flex; flex-direction: column;
+            min-width: 0; min-height: 0;
+            overflow: hidden;
+        }
+
+        .card-top {
+            display: flex; justify-content: space-between; align-items: baseline;
+            border-bottom: 1px solid rgba(214, 178, 98, .75);
+            box-shadow: 0 1px 0 rgba(0,0,0,.6);
+            padding-bottom: 2px; margin-bottom: 2px; flex-shrink: 0;
+        }
+
+        .time {
+            font-family: "Noto Serif", Georgia, serif;
+            font-size: .95rem; font-weight: bold;
+            color: #efe2c4;
+            text-shadow: 0 1px 2px rgba(0,0,0,.9);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            letter-spacing: -.2px;
+        }
+
+        .temp {
+            font-family: "Noto Serif", Georgia, serif;
+            font-size: 1.32rem; font-weight: bold;
+            color: var(--temp);
+            white-space: nowrap; line-height: 1.1;
+            text-shadow: 0 0 6px rgba(255, 70, 50, .55), 0 1px 2px rgba(0,0,0,.9);
+        }
+
+        .card-bottom {
+            flex: 1; min-height: 0;
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 2px; padding-left: 4px;
+            container-type: size;
+        }
+
+        .icon { flex: 0 0 auto; height: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; }
+        .icon .wicon { width: 100%; height: 100%; display: block; transform: scale(1.3); transform-origin: 36% 50%; filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+
+        .details {
+            display: grid; grid-template-columns: auto auto;
+            row-gap: 0; column-gap: 3px;
+            font-size: clamp(11px, calc(100cqh / 4.35), 20px);
+            line-height: 1;
+            flex: 0 0 auto; padding-right: 2px;
+            transform: scaleY(.8); transform-origin: 100% 50%;
+        }
+        .details span.label { text-align: right; color: var(--label); font-size: .92em; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,.8); }
+        .details span.col2 { margin-left: 5px; }
+        .details span.value { text-align: left; font-weight: bold; color: var(--ink); min-width: 2.2em; text-shadow: 0 1px 1px rgba(0,0,0,.8); }
+
+        .message {
+            border: 2px solid transparent;
+            background: var(--wood) padding-box, var(--brass) border-box;
+            border-radius: var(--border-radius);
+            color: var(--ink); text-align: center; padding: 18px 12px; margin-top: 10px;
+            font-family: "Noto Serif", Georgia, serif;
+        }
+        .error { color: #ff8a7a; }
+
+        .scroll-area::-webkit-scrollbar { display: none; }
+        .scroll-area { -ms-overflow-style: none; scrollbar-width: none; }
+
+        #toast {
+            position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+            border: 2px solid transparent; border-radius: 14px;
+            background: linear-gradient(180deg, #3a1d0c, #221106) padding-box, var(--brass) border-box;
+            padding: 5px 12px; font-size: .8rem; color: var(--ink);
+            opacity: 0; transition: opacity .4s; pointer-events: none; white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,.6);
+        }
+        #toast.show { opacity: 1; }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="header">
+        <div class="location-title brass-frame">Altenbochum <span class="stand" id="stand"></span></div>
+        <div class="location-title brass-frame">
+            Asel-Süd
+            <button class="refresh-btn" onclick="fetchWeatherData()">🔄 Neu</button>
+        </div>
+    </div>
+
+    <div class="scroll-area" id="scroll-area">
+        <div class="message">Lade Daten …</div>
+    </div>
+</div>
+<div id="toast"></div>
+
+<script>
+    const locs = {
+        altenbochum: { lat: 51.474, lon: 7.240 },
+        asel: { lat: 51.189, lon: 8.948 }
+    };
+
+    const daysStr = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+    const CACHE_KEY = 'wetterLetzteDaten';
+    let lastFetch = 0;
+
+    function getWeatherIcon(code, isDay, wind) {
+        return weatherIconSVG(code, isDay, wind);
+    }
+
+    function showToast(text, ms = 2500) {
+        const t = document.getElementById('toast');
+        t.textContent = text;
+        t.classList.add('show');
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => t.classList.remove('show'), ms);
+    }
+
+    function setStand(ts, offline) {
+        const d = new Date(ts);
+        const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+        const today = new Date().toDateString() === d.toDateString();
+        document.getElementById('stand').innerHTML =
+            (offline ? '⚠ offline<br>' : 'Stand<br>') + (today ? '' : daysStr[d.getDay()] + ' ') + hh + ':' + mm;
+    }
+
+    async function fetchWeatherData() {
+        const scrollArea = document.getElementById('scroll-area');
+        const hadContent = !!scrollArea.querySelector('.day-slide');
+        if (!hadContent) scrollArea.innerHTML = '<div class="message">Aktualisiere …</div>';
+        else showToast('Aktualisiere …', 1200);
+
+        try {
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${locs.altenbochum.lat},${locs.asel.lat}&longitude=${locs.altenbochum.lon},${locs.asel.lon}&hourly=temperature_2m,precipitation_probability,wind_speed_10m,weather_code,is_day,sunshine_duration,relative_humidity_2m,precipitation,wind_gusts_10m&timezone=Europe%2FBerlin&models=icon_d2,icon_eu`;
+
+            const response = await fetch(url, { cache: 'no-store' });
+            if (!response.ok) throw new Error("Netzwerkfehler");
+            const data = await response.json();
+
+            const keepScroll = scrollArea.scrollTop;
+            renderAllDays(data[0], data[1], scrollArea);
+            if (hadContent) scrollArea.scrollTop = keepScroll;
+            lastFetch = Date.now();
+            setStand(lastFetch, false);
+            try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: lastFetch, data })); } catch (e) {}
+            if (hadContent) showToast('Aktualisiert ✓', 1500);
+
+        } catch (error) {
+            // ohne Internet (z. B. auf dem Campingplatz): letzte gespeicherte Vorhersage zeigen
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) {}
+            if (saved && saved.data) {
+                if (!hadContent) renderAllDays(saved.data[0], saved.data[1], scrollArea);
+                setStand(saved.ts, true);
+                showToast('Kein Internet – letzte Vorhersage wird gezeigt', 3500);
+            } else {
+                scrollArea.innerHTML = `<div class="message error">Fehler: ${error.message}. Bitte später versuchen.</div>`;
+            }
+        }
+    }
+
+    function renderAllDays(dataA, dataB, container) {
+        let html = '';
+        const now = new Date();
+
+        for (let dayOffset = 0; dayOffset < 3; dayOffset++) {
+            // Berechnet exakt 00:00 Uhr für den passenden Tag (Heute, Morgen, Übermorgen)
+            const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset);
+            const targetDateMs = targetDate.getTime();
+
+            html += `<div class="day-slide">
+                        <div class="column">${generateCards(dataA, targetDateMs)}</div>
+                        <div class="column">${generateCards(dataB, targetDateMs)}</div>
+                     </div>`;
+        }
+
+        container.innerHTML = html;
+    }
+
+    function generateCards(data, targetDateMs) {
+        let cardsHtml = '';
+        const targetHours = [8, 10, 12, 14, 16, 18];
+
+        targetHours.forEach(hour => {
+            const blockStartMs = targetDateMs + (hour * 60 * 60 * 1000);
+
+            let tempSum = 0, maxRain = 0, maxWind = 0, totalSun = 0, humSum = 0, totalLiters = 0, maxGust = 0, dangerCode = 0, isDayBlock = 0, count = 0;
+
+            for (let j = 0; j < 2; j++) {
+                const checkTimeMs = blockStartMs + (j * 60 * 60 * 1000);
+                const hIdx = data.hourly.time.findIndex(t => new Date(t).getTime() === checkTimeMs);
+
+                if (hIdx === -1) continue;
+
+                // Intelligente Daten-Weiche: Sucht erst den Standardnamen, dann ICON-D2, dann Notfall ICON-EU
+                const getVal = (key) => {
+                    if (data.hourly[key] !== undefined && data.hourly[key][hIdx] !== null) return data.hourly[key][hIdx];
+                    if (data.hourly[key + '_icon_d2'] !== undefined && data.hourly[key + '_icon_d2'][hIdx] !== null) return data.hourly[key + '_icon_d2'][hIdx];
+                    if (data.hourly[key + '_icon_eu'] !== undefined && data.hourly[key + '_icon_eu'][hIdx] !== null) return data.hourly[key + '_icon_eu'][hIdx];
+                    return 0;
+                };
+
+                tempSum += getVal('temperature_2m');
+                maxRain = Math.max(maxRain, getVal('precipitation_probability'));
+                maxWind = Math.max(maxWind, getVal('wind_speed_10m'));
+                totalSun += (getVal('sunshine_duration') / 3600);
+                humSum += getVal('relative_humidity_2m');
+
+                let precip = getVal('precipitation');
+                if (typeof precip === 'number') totalLiters += precip;
+
+                maxGust = Math.max(maxGust, getVal('wind_gusts_10m'));
+
+                let currentCode = getVal('weather_code');
+                if (currentCode >= 45) dangerCode = Math.max(dangerCode, currentCode);
+                if (getVal('is_day') === 1) isDayBlock = 1;
+                count++;
+            }
+
+            if (count === 0) {
+                cardsHtml += `<div class="weather-card brass-frame"><div class="card-top"><span class="time">Keine Daten</span></div></div>`;
+                return;
+            }
+
+            let finalCode = 0;
+            if (dangerCode >= 45) {
+                finalCode = dangerCode;
+            } else {
+                if (totalSun >= 1.25) finalCode = 0;
+                else if (totalSun >= 0.5) finalCode = 1;
+                else finalCode = 3;
+            }
+
+            const dayName = daysStr[new Date(blockStartMs).getDay()];
+            const hourStr = String(hour).padStart(2, '0');
+
+            const avgTemp = (tempSum / count).toFixed(1);
+            const finalSunStr = totalSun.toFixed(1);
+            const finalWind = maxWind.toFixed(0);
+            const avgHum = (humSum / count).toFixed(0);
+            const finalLiters = totalLiters.toFixed(1);
+            const finalGust = maxGust.toFixed(0);
+
+            const icon = getWeatherIcon(finalCode, isDayBlock, maxWind);
+
+            cardsHtml += `
+                <div class="weather-card brass-frame">
+                    <div class="card-top">
+                        <span class="time">${dayName}, ab ${hourStr} Uhr</span>
+                        <span class="temp">${avgTemp}°C</span>
+                    </div>
+                    <div class="card-bottom">
+                        <span class="icon">${icon}</span>
+                        <div class="details">
+                            <span class="label">S:</span> <span class="value">${finalSunStr}</span>
+                            <span class="label">R:</span> <span class="value">${maxRain}</span>
+                            <span class="label">L:</span> <span class="value">${finalLiters}</span>
+                            <span class="label">W:</span> <span class="value">${finalWind}</span>
+                            <span class="label">B:</span> <span class="value">${finalGust}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        return cardsHtml;
+    }
+
+    // Beim Zurückkehren in die App automatisch auffrischen, wenn die Daten älter als 30 Minuten sind
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && Date.now() - lastFetch > 30 * 60 * 1000) fetchWeatherData();
+    });
+
+    document.addEventListener('DOMContentLoaded', fetchWeatherData);
+
+    /* App-Dateien im Handy speichern, damit die App ohne Datei-Manager startet */
+    const APP_VERSION = 4;
+    const SW_CACHE = 'wetter-v4';
+    window.addEventListener('load', async () => {
+        if (!('serviceWorker' in navigator)) return;
+        try {
+            await navigator.serviceWorker.register('sw.js');
+            await navigator.serviceWorker.ready;
+            const check = async (n = 0) => {
+                const keys = await (await caches.open(SW_CACHE)).keys();
+                if (keys.length < 7 && n < 10) setTimeout(() => check(n + 1), 1000);
+            };
+            check();
+        } catch (e) {
+            console.log('Offline-Modus: Fehler – ' + e.message);
+        }
+    });
+</script>
+
+</body>
+</html>
